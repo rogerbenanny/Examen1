@@ -9,10 +9,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.room.*
@@ -25,25 +29,35 @@ import kotlinx.coroutines.launch
 @Entity(tableName = "user")
 data class User(
     @PrimaryKey val id: Int,
-    @ColumnInfo(name = "usuario") val usuario: String,
-    @ColumnInfo(name = "nombre") val nombre: String
+    @ColumnInfo(name = "username") val username: String,
+    @ColumnInfo(name = "name") val name: String,
+    @ColumnInfo(name = "password") val password: String,
 )
 
 // Definición de la entidad Item
-@Entity(tableName = "item")
+@Entity(tableName = "item",
+    foreignKeys = [ForeignKey(
+        entity = User::class,
+        childColumns = ["userId"],
+        parentColumns = ["id"]
+    )])
 data class Item(
     @PrimaryKey val id: Int,
-    @ColumnInfo(name = "titulo") val titulo: String,
-    @ColumnInfo(name = "descripcion") val descripcion: String
+    @ColumnInfo(name = "archive_name") val archive: String,
+    @ColumnInfo(name = "title") val title: String,
+    @ColumnInfo(name = "description") val description: String,
+    @ColumnInfo(name = "userId") val userId: Int
 )
 
 // Data Access Object (DAO) para la tabla User
 @Dao
 interface UserDao {
-    @Query("SELECT * FROM user WHERE usuario = :usuario AND nombre = :nombre")
-    fun getUser(usuario: String, nombre: String): User?
+    @Query("SELECT * FROM user WHERE username = :username AND password = :password")
+    fun getUser(username: String, password: String): User?
     @Insert
-    fun insert(users: List<User>)
+    fun insert(users: User)
+    @Insert
+    fun insertUsers(users: User)
 }
 
 // Data Access Object (DAO) para la tabla Item
@@ -51,8 +65,18 @@ interface UserDao {
 interface ItemDao {
     @Query("SELECT * FROM item")
     fun getAllItems(): List<Item>
+    @Query("SELECT * FROM item WHERE userId = :userId")
+    fun getItemsByUser(userId: Int): List<Item>
     @Insert
-    fun insert(item: List<Item>)
+    fun insert(item: Item)
+    @Insert
+    fun insertItems(item: List<Item>)
+    @Update
+    fun updateItem(item: Item)
+
+    @Delete
+    fun deleteItem(item: Item)
+    
 }
 
 // Database
@@ -76,48 +100,51 @@ class MainActivity : ComponentActivity() {
             "user-db"
         ).allowMainThreadQueries().fallbackToDestructiveMigration().build()
 
-        // Insertar usuarios predefinidos
+        // Insertar usernames predefinidos
         insertPredefinedUsers()
 
         setContent {
-            MyApp(userDatabase)
+            val userObject = User(0, "","","")
+            val user by remember { mutableStateOf(userObject) }
+            val itemObj = Item(0, "", "", "", 0)
+            val item by remember { mutableStateOf(itemObj) }
+            MyApp(userDatabase, user, item)
         }
     }
 
     private fun insertPredefinedUsers() {
         val userDao = userDatabase.userDao()
-        val users = listOf(
-            User(1, "usuario1", "Nombre1"),
-            User(2, "usuario2", "Nombre2"),
-            User(3, "usuario3", "Nombre3")
-        )
+        /*val users = listOf(
+            User(1,"username", "Admin","qwerty"),
+            //User(2, "username2", "name2","qwerty"),
+            //User(3, "username3", "name3","qwerty")
+        )*/
+        val user = User(1,"username", "Admin","qwerty")
         val itemDao = userDatabase.itemDao()
-        val item = listOf(
-            Item(1, "la llorona ", "dasd"),
-            Item(2, "usuadadsario2", "dasd"),
-            Item(3, "das", "Nomadadbre3")
+        val items = listOf(
+            Item(1, "img1.jpg","la llorona ", "dasdasdjkasaskjdhas",1),
+            Item(2, "img2.jpg","usuadadsario2", "aqwertyuioopqweqw",1),
+            Item(3, "img3.jpg","das", "zxbnvcnbzzvxnbcv",1)
         )
-        // Ejecutar la inserción de usuarios en un hilo en segundo plano utilizando corutinas
+        // Ejecutar la inserción de usernames en un hilo en segundo plano utilizando corutinas
         lifecycleScope.launch(Dispatchers.IO) {
-            userDao.insert(users)
-            itemDao.insert(item)
+            userDao.insert(user)
+            itemDao.insertItems(items)
         }
     }
 }
 
 //Navegacion entre pantallas
 @Composable
-fun MyApp(userDatabase: AppDatabase) {
-    var usuario by remember { mutableStateOf("") }
-    var nombre by remember { mutableStateOf("") }
+fun MyApp(userDatabase: AppDatabase, user: User, item: Item) {
     var isLoggedIn by remember { mutableStateOf(false) }
-
+    val user by remember { mutableStateOf(user) }
     if (isLoggedIn) {
         // Segunda pantalla después de iniciar sesión
-        GreetingScreen(userDatabase)
+        GreetingScreen(userDatabase, user, item)
     } else {
         // Primera pantalla de inicio de sesión
-        LoginScreen(userDatabase, usuario, nombre) { isLoggedIn = true }
+        LoginScreen(userDatabase, user){ isLoggedIn = true}
     }
 }
 
@@ -125,12 +152,12 @@ fun MyApp(userDatabase: AppDatabase) {
 @Composable
 fun LoginScreen(
     userDatabase: AppDatabase,
-    usuario: String,
-    nombre: String,
+    user:User,
     onLoggedIn: () -> Unit
 ) {
-    var userUsuario by remember { mutableStateOf(usuario) }
-    var userNombre by remember { mutableStateOf(nombre) }
+    var username by remember { mutableStateOf(user.username) }
+    var password by remember { mutableStateOf(user.password) }
+    var user by remember { mutableStateOf(user) }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -138,21 +165,24 @@ fun LoginScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         TextField(
-            value = userUsuario,
-            onValueChange = { userUsuario = it },
-            label = { Text("Usuario") }
+            value = username,
+            onValueChange = { username = it },
+            label = { Text("username") }
         )
 
         TextField(
-            value = userNombre,
-            onValueChange = { userNombre = it },
-            label = { Text("Nombre") }
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("password") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
         )
 
         Button(
             onClick = {
-                val user = userDatabase.userDao().getUser(userUsuario, userNombre)
-                if (user != null) {
+                val userget = userDatabase.userDao().getUser(username, password)
+                if (userget != null) {
+                    user = userget
+
                     onLoggedIn()
                 }
             },
@@ -165,15 +195,26 @@ fun LoginScreen(
 
 //Funcion que se mostrar en la seunda pantalla
 @Composable
-fun GreetingScreen(userDatabase: AppDatabase) {
+fun GreetingScreen(userDatabase: AppDatabase, user:User, item: Item) {
     val itemDao = userDatabase.itemDao()
-    val allItems: List<Item> = itemDao.getAllItems()
-    val items = remember { mutableStateListOf<Item>() }
+    val allItemsByUser: List<Item> = itemDao.getItemsByUser(user.id)
+    val item = remember { mutableStateOf(item) }
+    val allItemsUser = remember { mutableStateListOf<Item>() }
     Column() {
-        Text(text = "sadsa")
+        Text(text = "Items")
 // Haz lo que necesites con los datos, por ejemplo, mostrarlos en el registro
-        allItems.forEach { item ->
-            Text("hola ---${item.id} ${item.titulo} ${item.descripcion}", modifier = Modifier.padding(top = 8.dp))
+        allItemsByUser.forEach{ item -> allItemsUser.add(item)}
+        LazyColumn(
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+        ){
+            /*items(allItemsUser){
+                itemg ->
+                CardItem(
+                    userDatabase = userDatabase,
+                    funItem = { item = it },
+                    item = itemg
+                )
+            }*/
         }
     }
 }
