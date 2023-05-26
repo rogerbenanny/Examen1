@@ -1,4 +1,5 @@
 package com.example.examen1
+import android.content.ContentValues.TAG
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import android.os.Bundle
@@ -10,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
@@ -19,6 +21,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.NavController
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import androidx.room.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,12 +50,20 @@ data class User(
         parentColumns = ["id"]
     )])
 data class Item(
-    @PrimaryKey val id: Int,
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
     @ColumnInfo(name = "archive_name") val archive: String,
     @ColumnInfo(name = "title") val title: String,
     @ColumnInfo(name = "description") val description: String,
     @ColumnInfo(name = "userId") val userId: Int
-)
+){
+    constructor(archive: String, title: String, description: String, userId: Int) : this(
+        id = 0,
+        archive = archive,
+        title = title,
+        description = description,
+        userId = userId
+    )
+}
 
 // Data Access Object (DAO) para la tabla User
 @Dao
@@ -80,7 +96,7 @@ interface ItemDao {
 }
 
 // Database
-@Database(entities = [User::class, Item::class], version = 14)
+@Database(entities = [User::class, Item::class], version = 1_0_35)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun userDao(): UserDao
     abstract fun itemDao(): ItemDao
@@ -89,7 +105,7 @@ abstract class AppDatabase : RoomDatabase() {
 //Clase principal donde llenamos datos de antemano a la base de datos
 class MainActivity : ComponentActivity() {
     private lateinit var userDatabase: AppDatabase
-
+    private lateinit var listViewModel: ListViewModel
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -104,11 +120,29 @@ class MainActivity : ComponentActivity() {
         insertPredefinedUsers()
 
         setContent {
-            val userObject = User(0, "","","")
-            val user by remember { mutableStateOf(userObject) }
+            val userObject = User(0, "", "", "")
+            val user = remember { mutableStateOf(userObject) }
             val itemObj = Item(0, "", "", "", 0)
             val item by remember { mutableStateOf(itemObj) }
-            MyApp(userDatabase, user, item)
+
+            val navController = rememberNavController()
+            NavHost(navController = navController, startDestination = "login") {
+                composable("item/{id}", arguments = listOf(navArgument("id"){type = NavType.IntType})) {
+                        backStackEntry -> val id = backStackEntry.arguments?.getInt("id")
+                    listViewModel = ListViewModel.getInstance(id, userDatabase.itemDao())
+                    CardItem(listViewModel,id)
+                }
+                composable("login") {
+                    LoginScreen(userDatabase, navController,user.value)
+                }
+                composable("list/{id}",arguments = listOf(navArgument("id"){type = NavType.IntType})) {
+                        backStackEntry -> val id = backStackEntry.arguments?.getInt("id")
+                    Log.i(TAG, "Esta es una información importante $user")
+                    listViewModel = ListViewModel.getInstance(id, userDatabase.itemDao())
+                    ListScreen(navController,listViewModel)
+
+                }
+            }
         }
     }
 
@@ -122,9 +156,9 @@ class MainActivity : ComponentActivity() {
         val user = User(1,"username", "Admin","qwerty")
         val itemDao = userDatabase.itemDao()
         val items = listOf(
-            Item(1, "img1.jpg","la llorona ", "dasdasdjkasaskjdhas",1),
-            Item(2, "img2.jpg","usuadadsario2", "aqwertyuioopqweqw",1),
-            Item(3, "img3.jpg","das", "zxbnvcnbzzvxnbcv",1)
+            Item("img1.jpg","la llorona ", "dasdasdjkasaskjdhas",1),
+            Item("img2.jpg","usuadadsario2", "aqwertyuioopqweqw",1),
+            Item("img3.jpg","das", "zxbnvcnbzzvxnbcv",1)
         )
         // Ejecutar la inserción de usernames en un hilo en segundo plano utilizando corutinas
         lifecycleScope.launch(Dispatchers.IO) {
@@ -135,29 +169,29 @@ class MainActivity : ComponentActivity() {
 }
 
 //Navegacion entre pantallas
-@Composable
-fun MyApp(userDatabase: AppDatabase, user: User, item: Item) {
-    var isLoggedIn by remember { mutableStateOf(false) }
-    val user by remember { mutableStateOf(user) }
-    if (isLoggedIn) {
-        // Segunda pantalla después de iniciar sesión
-        GreetingScreen(userDatabase, user, item)
-    } else {
-        // Primera pantalla de inicio de sesión
-        LoginScreen(userDatabase, user){ isLoggedIn = true}
-    }
-}
+//@Composable
+//fun MyApp(userDatabase: AppDatabase, user: User, item: Item) {
+//    var isLoggedIn by remember { mutableStateOf(false) }
+//    val user by remember { mutableStateOf(user) }
+//    if (isLoggedIn) {
+//        // Segunda pantalla después de iniciar sesión
+//        GreetingScreen(userDatabase, user, item)
+//    } else {
+//        // Primera pantalla de inicio de sesión
+//        LoginScreen(userDatabase, user)
+//    }
+//}
 
 //funcion de la primera pantalla
 @Composable
 fun LoginScreen(
     userDatabase: AppDatabase,
-    user:User,
-    onLoggedIn: () -> Unit
+    navController : NavController,
+    user:User
 ) {
     var username by remember { mutableStateOf(user.username) }
     var password by remember { mutableStateOf(user.password) }
-    var user by remember { mutableStateOf(user) }
+
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -169,21 +203,19 @@ fun LoginScreen(
             onValueChange = { username = it },
             label = { Text("username") }
         )
-
+        Spacer(modifier = Modifier.padding(20.dp))
         TextField(
             value = password,
             onValueChange = { password = it },
             label = { Text("password") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
         )
-
+        Spacer(modifier = Modifier.padding(30.dp))
         Button(
             onClick = {
                 val userget = userDatabase.userDao().getUser(username, password)
                 if (userget != null) {
-                    user = userget
-
-                    onLoggedIn()
+                    navController.navigate("list/${userget.id}")
                 }
             },
             modifier = Modifier.padding(top = 16.dp)
